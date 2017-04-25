@@ -3,59 +3,73 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/ioutil"
-	"log"
+	"math/rand"
 	"os"
+	"time"
 
-	"github.com/gorilla/securecookie"
+	"github.com/tidwall/gjson"
 )
 
 const (
-	usersFilePath = "./users/"
-	postsFilePath = "./posts/"
-	authsFilePath = "./auths"
+	usersFilePath  = "./users/"
+	postsFilePath  = "./posts/"
+	authsFilePath  = "./auths"
+	EXPIRY_IN_SECS = 30 * 60
 )
 
 var (
 	authsFile, _ = os.OpenFile(authsFilePath, os.O_RDWR|os.O_CREATE, 0644)
 )
+var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-func isLogin(authToken string) (*userData, error) {
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
+func randSeq(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(b)
+}
+
+func isLogin(authToken string) (*userData, string) {
 
 	if authToken == "" {
-		return nil, errors.New("No authentification token")
+		return nil, "No authentification token"
 	}
 
 	username := getUserIdFromAuth(authToken)
 	if username == "" {
-		return nil, errors.New("Wrong authentification token")
+
+		return nil, "Wrong authentification token"
 	}
 	return loadUserInfo(username)
 }
 
-func loadUserInfo(username string) (*userData, error) {
+func loadUserInfo(username string) (*userData, string) {
 
-	temp, err := ioutil.ReadFile(usersFilePath + username)
 	var userdata *userData
-
-	json.Unmarshal(temp, userdata)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return userdata, nil
+	temp, err := ioutil.ReadFile(usersFilePath + username)
+	checkErr(err)
+	err = json.Unmarshal(temp, &userdata)
+	checkErr(err)
+	return userdata, ""
 }
 
-func register(username, password, email string) (auth string, err error) {
+func register(name, username, password, email string) (auth string, err string) {
 
 	if !userExists(username) {
 
-		authToken := string(securecookie.GenerateRandomKey(32))
+		authToken := randSeq(10)
 		followers := []string{}
 		following := []string{}
 		posts := []string{}
 
 		newUser := &userData{
+			Name:      name,
 			Username:  username,
 			Password:  password,
 			AuthToken: authToken,
@@ -64,26 +78,26 @@ func register(username, password, email string) (auth string, err error) {
 			Posts:     posts,
 		}
 
-		_ = writeUserDataToFile(username, newUser)
+		go writeUserDataToFile(username, newUser)
+		go writeAuthDataToFile(username, authToken)
 
-		return authToken, err
+		return authToken, ""
 
 	}
-	return "", fmt.Errorf("Sorry, that username/email has already been taken. Please try again!")
-
+	return "", "Sorry, that username/email has already been taken. Please try again!"
 }
 
-func login(username, password string) (auth string, err error) {
-	fmt.Println("IN LOGIN")
+func login(username, password string) (string, *userData, string) {
 	if !userExists(username) || !validUser(username, password) {
-		return "", errors.New("Wrong username or password!")
+		return "", nil, "Wrong username or password!"
 	}
-
-	auth = string(securecookie.GenerateRandomKey(32))
-	if startSession(username, auth) {
-		return auth, nil
+	auth := randSeq(10)
+	go startSession(username, auth)
+	currentUserData, err := loadUserInfo(username)
+	if err != "" {
+		checkErr(errors.New(err))
 	}
-	return "", errors.New("Some Error Occurred!")
+	return auth, currentUserData, ""
 }
 
 func logout(user *userData) {
@@ -92,45 +106,50 @@ func logout(user *userData) {
 		return
 	}
 
-	// newAuth := string(securecookie.GenerateRandomKey(32))
-	// oldAuth, _ := redis.String(conn.Do("HGET", "user:"+user.username, "auth"))
-
-	// _, err := conn.Do("HSET", "user:"+user.Id, "auth", newAuth)
-	// if err != nil {
-	// 	log.Println(err)
-	// }
-	// _, err = conn.Do("HSET", "auths", newAuth, user.Id)
-	// if err != nil {
-	// 	log.Println(err)
-	// }
-	// _, err = conn.Do("HDEL", "auths", oldAuth)
-	// if err != nil {
-	// 	log.Println(err)
-	// }
+	authToken := getAuthFromUserId(user.Username)
+	go removeAuthToken(authToken)
 }
 
-func post(user *userData, status string) error {
+func post(user *userData, status string) {
+	newPost := &postData{
+		PostId:     randSeq(15),
+		Username:   user.Username,
+		Content:    status,
+		TimePosted: time.Now().String(),
+	}
 
-	return nil
+	go writePostDataToFile(user.Username, newPost)
+
 }
 
-func getUserPosts(username string) ([]*postData, error) {
+func follow(u *userData, userToFollow string) {
+	if userExists(userToFollow) {
+		// temp, err := ioutil.ReadFile(usersFilePath + userToFollow)
+	}
+}
+
+func delete(user *userData) {
+	go logout(user)
+	go os.Remove(usersFilePath + user.Username)
+	go os.Remove(postsFilePath + user.Username)
+}
+
+func getUserPosts(username string) ([]postData, error) {
 
 	values, err := ioutil.ReadFile(postsFilePath + username)
-	if err != nil {
-		log.Fatal(err)
+	checkErr(err)
+	postsList := gjson.Get(string(values), "posts").String()
+	postsByUser := make([]postData, 0)
+	if postsList != "[]" {
+		json.Unmarshal([]byte(postsList), &postsByUser)
 	}
-	postsByUser := []*postData{}
-	json.Unmarshal(values, postsByUser)
-	return postsByUser, err
+	return postsByUser, nil
 }
 
 func getUsers() ([]*userData, error) {
 
 	users, err := ioutil.ReadDir(usersFilePath)
-	if err != nil {
-		log.Fatal(err)
-	}
+	checkErr(err)
 	allUsernames := []*userData{}
 	for _, user := range users {
 		allUsernames = append(allUsernames, &userData{Username: user.Name()})

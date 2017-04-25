@@ -2,11 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
-	"strings"
 
 	// "github.com/satori/go.uuid"
 	"github.com/tidwall/gjson"
@@ -15,6 +13,7 @@ import (
 
 /////////////////////////////////
 type userData struct {
+	Name      string
 	Username  string
 	Email     string
 	Password  string
@@ -25,8 +24,8 @@ type userData struct {
 }
 
 type postData struct {
-	Username   string
 	PostId     string
+	Username   string
 	Content    string
 	TimePosted string
 }
@@ -35,108 +34,109 @@ type usersFileData struct {
 	Username userData
 }
 
+func checkErr(err error) {
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 func userExists(username string) bool {
 	if _, err := os.Stat(usersFilePath + username); os.IsNotExist(err) {
 		return false
 	}
 	return true
-
 }
 
 func validUser(username, password string) bool {
 	usersData, err := ioutil.ReadFile(usersFilePath + username)
-	if err != nil {
-		log.Fatal(err)
-	}
+	checkErr(err)
 	usersDataString := string(usersData)
 	storedPassword := gjson.Get(usersDataString, "Password")
-	// dataOfUser := []byte(usersDataString[i : j+2])
-	// fmt.Println(j, usersDataString[i:j+2], storedPassword.String())
-	// var jsonData userData
-	// err := json.Unmarshal(dataOfUser, &jsonData)
-	// if err != nil {
-	// }
-	// fmt.Println(jsonData.Password, password)
 	if storedPassword.String() == password {
 		return true
 	}
 	return false
 }
 
-func startSession(username, authToken string) bool {
-	fmt.Println("IN STARTSESSION")
-	userFile, err := os.OpenFile(usersFilePath+username, os.O_RDWR, 0644)
+func startSession(username, authToken string) {
 	usersData, err := ioutil.ReadFile(usersFilePath + username)
-	if err != nil {
-		log.Fatal(err)
-	}
+	checkErr(err)
 	usersDataString := string(usersData)
-	earlierAuth := gjson.Get(usersDataString, "AuthToken")
 
 	modifiedJson, err := sjson.Set(usersDataString, "AuthToken", authToken)
-	if err != nil {
-		log.Fatal(err)
-	}
-	userFile.WriteString(modifiedJson)
+	checkErr(err)
+	go ioutil.WriteFile(usersFilePath+username, []byte(modifiedJson), 0644)
+
+	earlierAuth := gjson.Get(usersDataString, "AuthToken").String()
 	authsData, err := ioutil.ReadFile(authsFilePath)
-	authsDataString := string(authsData)
-	modifiedAuthsData := strings.Replace(authsDataString, earlierAuth.String(), authToken, -1)
-	fmt.Println(earlierAuth.String(), "\n-----------\n", authToken, "\n-----------\n", modifiedAuthsData)
-	authsFile.WriteString(modifiedAuthsData)
-	return true
+	checkErr(err)
+
+	modifiedJson, err = sjson.Delete(string(authsData), earlierAuth)
+	checkErr(err)
+
+	modifiedJson, err = sjson.Set(modifiedJson, authToken, username)
+	checkErr(err)
+
+	go ioutil.WriteFile(authsFilePath, []byte(modifiedJson), 0644)
 
 }
 
-func writeUserDataToFile(username string, newUser *userData) bool {
-	userFile, err := os.OpenFile(usersFilePath+username, os.O_RDWR|os.O_CREATE, 0644)
-	postsFile, err := os.OpenFile(postsFilePath+username, os.O_RDWR|os.O_CREATE, 0644)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// x := &userData{
-	// 	Username:  newUser.Username,
-	// 	Email:     newUser.Email,
-	// 	Password:  newUser.Password,
-	// 	AuthToken: newUser.AuthToken,
-	// 	Followers: newUser.Followers,
-	// 	Following: newUser.Following,
-	// 	Posts:     newUser.Posts,
-	// }
-
+func writeUserDataToFile(username string, newUser *userData) {
 	out, err := json.Marshal(newUser)
-	if err != nil {
-		log.Fatal(err)
-	}
+	checkErr(err)
 
-	userFile.WriteString(string(out))
-	postsFile.WriteString("[]")
+	err = ioutil.WriteFile(usersFilePath+username, []byte(string(out)), 0644)
+	checkErr(err)
+	go ioutil.WriteFile(postsFilePath+username, []byte(`{"posts":[]}`), 0644)
+}
 
-	// authsFile.WriteString("{\"auth\":\"" + newUser.AuthToken + "\",\"username\":\"" + username + "\"}\n")
+func writeAuthDataToFile(username string, authToken string) {
+	// servers := 3
+	// v0Primary := GetPrimary(1, servers)
+	// cfg.replicateWriteAuth(v0Primary, username, authToken, servers)
+	authsData, err := ioutil.ReadFile(authsFilePath)
+	modifiedJson, err := sjson.Set(string(authsData), authToken, username)
+	checkErr(err)
+	ioutil.WriteFile(authsFilePath, []byte(modifiedJson), 0644)
+	go ioutil.WriteFile(authsFilePath, []byte(modifiedJson), 0644)
+}
 
-	return true
+func writePostDataToFile(username string, newPost *postData) {
+	previousPosts, err := ioutil.ReadFile(postsFilePath + username)
+	checkErr(err)
+
+	modifiedJson, err := sjson.Set(string(previousPosts), "posts.-1", newPost)
+	checkErr(err)
+
+	go ioutil.WriteFile(postsFilePath+username, []byte(modifiedJson), 0644)
 }
 
 func getUserIdFromAuth(authToken string) string {
 	authsData, err := ioutil.ReadFile(authsFilePath)
-	if err != nil {
-		log.Fatal(err)
-	}
+	checkErr(err)
 	authsDataString := string(authsData)
-	username := gjson.Get(authsDataString, "..#[auth ==\""+authToken+"\"]")
+	username := gjson.Get(authsDataString, authToken)
 
-	// fmt.Println(authsDataString, authToken, username.String())
 	if username.Exists() {
 		return username.String()
 	}
-	// dataOfUser := []byte(usersDataString[i : j+2])
-	// fmt.Println(j, usersDataString[i:j+2], storedPassword.String())
-	// var jsonData userData
-	// err := json.Unmarshal(dataOfUser, &jsonData)
-	// if err != nil {
-	// }
-	// fmt.Println(jsonData.Password, password)f
+
 	return ""
+}
+
+func getAuthFromUserId(username string) string {
+	userData, err := ioutil.ReadFile(usersFilePath + username)
+	checkErr(err)
+
+	return gjson.Get(string(userData), "AuthToken").String()
+}
+
+func removeAuthToken(authToken string) {
+	authsData, err := ioutil.ReadFile(authsFilePath)
+	if err != nil {
+		panic(err)
+	}
+	modifiedJson, err := sjson.Delete(string(authsData), authToken)
+	go ioutil.WriteFile(authsFilePath, []byte(modifiedJson), 0644)
 
 }

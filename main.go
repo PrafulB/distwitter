@@ -1,118 +1,237 @@
 package main
 
 import (
-	"errors"
-	"fmt"
-	"log"
+	"encoding/json"
 	"net/http"
 	"os"
 	// "strconv"
 
 	"github.com/gorilla/mux"
-	"github.com/unrolled/render"
 )
 
-var (
-	templateRender = render.New(render.Options{
-		Layout:        "layout",
-		IsDevelopment: true,
-	})
-)
+var cfg *configWA
+var primaryID int
+var servers int
 
 func Index(w http.ResponseWriter, r *http.Request) {
-	templateParams := map[string]interface{}{}
-	u, err := isLogin(getAuth(r))
-	fmt.Println(err, u)
-	templateParams["user"] = u
-	if nil != err {
-		templateRender.HTML(w, http.StatusOK, "welcome", templateParams)
+	setupResponse(w, r)
+	u, err1 := isLogin(getAuth(r))
+	if "" != err1 {
+		w.Header().Add("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("User unauthenticated yet."))
+		return
 	} else {
-		http.Redirect(w, r, "/home", http.StatusFound)
+		success := map[string]interface{}{}
+		success["user"] = u
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		err := json.NewEncoder(w).Encode(success)
+		checkErr(err)
 	}
 }
 
 func Home(w http.ResponseWriter, r *http.Request) {
-	templateParams := map[string]interface{}{}
-	u, err := isLogin(getAuth(r))
-	if nil != err {
-		http.Redirect(w, r, "/", http.StatusFound)
+	setupResponse(w, r)
+	if r.Method == "OPTIONS" {
 		return
 	}
-	templateParams["user"] = u
-
-	posts, err := getUserPosts(u.Username)
-	if err != nil {
-		log.Fatal(err)
+	u, err1 := isLogin(getAuth(r))
+	if "" != err1 {
+		w.Header().Add("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("User unauthenticated yet."))
+		return
 	}
+	posts, err := getUserPosts(u.Username)
+	checkErr(err)
+	postsResp := map[string]interface{}{}
 
-	templateParams["posts"] = posts
-
-	templateRender.HTML(w, http.StatusOK, "home", templateParams)
+	postsResp["posts"] = posts
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	err = json.NewEncoder(w).Encode(postsResp)
+	checkErr(err)
 }
 
 func Register(w http.ResponseWriter, r *http.Request) {
+	setupResponse(w, r)
+	if r.Method == "OPTIONS" {
+		return
+	}
+
+	name := r.PostFormValue("name")
 	username := r.PostFormValue("username")
 	email := r.PostFormValue("email")
 	password := r.PostFormValue("password")
-	password2 := r.PostFormValue("password2")
-	if username == "" || email == "" || password == "" || password2 == "" {
-		GoBack(w, r, errors.New("Every field of the registration form is needed!"))
+
+	auth, err := register(name, username, password, email)
+	if err != "" {
+		goBack := map[string]string{
+			"error": err,
+		}
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(goBack)
 		return
 	}
-	if password != password2 {
-		GoBack(w, r, errors.New("The two password fileds don't match!"))
-		return
-	}
-	auth, err := register(username, password, email)
-	if err != nil {
-		GoBack(w, r, err)
-		return
-	}
+
 	setSession(auth, w)
-	templateParams := map[string]interface{}{}
-	templateParams["username"] = username
-	templateRender.HTML(w, http.StatusOK, "register", templateParams)
+	success := map[string]string{
+		"name":     name,
+		"username": username,
+	}
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(success)
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
-	username := r.PostFormValue("username")
-	password := r.PostFormValue("password")
-	if username == "" || password == "" {
-		GoBack(w, r, errors.New("You need to enter both username and password to login."))
+	setupResponse(w, r)
+	if r.Method == "OPTIONS" {
 		return
 	}
-	auth, err := login(username, password)
+	username := r.PostFormValue("username")
+	password := r.PostFormValue("password")
 
-	if err != nil {
-		GoBack(w, r, err)
+	auth, currentUserData, err := login(username, password)
+
+	if err != "" {
+		goBack := map[string]string{
+			"error": err,
+		}
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(goBack)
 		return
 	}
 	setSession(auth, w)
-	fmt.Println("Trying Redirect")
-	http.Redirect(w, r, "/", http.StatusFound)
+	success := map[string]string{
+		"name":     currentUserData.Name,
+		"username": currentUserData.Username,
+	}
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(success)
 }
 
 func Logout(w http.ResponseWriter, r *http.Request) {
-	u, err := isLogin(getAuth(r))
-	if nil != err {
-		http.Redirect(w, r, "/", http.StatusFound)
+	setupResponse(w, r)
+	if r.Method == "OPTIONS" {
 		return
 	}
-	logout(u)
-	http.Redirect(w, r, "/", http.StatusFound)
+	u, err := isLogin(getAuth(r))
+	if "" != err {
+		goBack := map[string]string{
+			"error": err,
+		}
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(goBack)
+		return
+	}
+	go logout(u)
+	success := map[string]string{
+		"message": "Logged Out",
+	}
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(success)
 }
 
-func GoBack(w http.ResponseWriter, r *http.Request, err error) {
-	templateParams := map[string]interface{}{}
-	templateParams["error"] = err
-	templateRender.HTML(w, http.StatusOK, "error", templateParams)
+func Post(w http.ResponseWriter, r *http.Request) {
+	setupResponse(w, r)
+	if r.Method == "OPTIONS" {
+		return
+	}
+	u, err := isLogin(getAuth(r))
+	if "" != err {
+		goBack := map[string]string{
+			"error": err,
+		}
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(goBack)
+		return
+	}
+	content := r.PostFormValue("status")
+	go post(u, content)
+	success := map[string]string{
+		"message": "Post Successful",
+	}
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(success)
+}
+
+func Follow(w http.ResponseWriter, r *http.Request) {
+	setupResponse(w, r)
+	if r.Method == "OPTIONS" {
+		return
+	}
+	u, err := isLogin(getAuth(r))
+	if "" != err {
+		goBack := map[string]string{
+			"error": err,
+		}
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(goBack)
+		return
+	}
+	userToFollow := r.PostFormValue("username")
+	go follow(u, userToFollow)
+	success := map[string]string{
+		"message": "Follower Added",
+	}
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(success)
+}
+
+func Delete(w http.ResponseWriter, r *http.Request) {
+	setupResponse(w, r)
+	if r.Method == "OPTIONS" {
+		return
+	}
+	u, err := isLogin(getAuth(r))
+	if "" != err {
+		goBack := map[string]string{
+			"error": err,
+		}
+		w.Header().Add("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(goBack)
+		return
+	}
+	go delete(u)
+	success := map[string]string{
+		"message": "User Deleted",
+	}
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(success)
+}
+
+func setupResponse(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+}
+
+func temp(*configWA) {
+
 }
 
 func main() {
 
-	os.MkdirAll(usersFilePath, 0755)
-	os.MkdirAll(postsFilePath, 0755)
+	go os.MkdirAll(usersFilePath, 0755)
+	go os.MkdirAll(postsFilePath, 0755)
 
+	servers := 3
+	cfg := make_config_write_auth(servers, false)
+	temp(cfg)
 	// if f.Size() == 0 {
 	// 	userNamesFile.WriteString("[]")
 	// }
@@ -121,9 +240,11 @@ func main() {
 	// router := httprouter.New()
 	router.HandleFunc("/", Index)
 	router.HandleFunc("/home", Home)
-	router.HandleFunc("/register", Register).Methods("POST")
-	router.HandleFunc("/login", Login).Methods("POST")
+	router.HandleFunc("/register", Register).Methods("POST", "OPTIONS")
+	router.HandleFunc("/login", Login).Methods("POST", "OPTIONS")
+	router.HandleFunc("/post", Post).Methods("POST", "OPTIONS")
 	router.HandleFunc("/logout", Logout)
+	router.HandleFunc("/delete", Delete).Methods("DELETE", "OPTIONS")
 
 	http.Handle("/", router)
 	http.ListenAndServe(":8080", nil)

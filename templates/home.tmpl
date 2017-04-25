@@ -9,15 +9,22 @@
 		</table>
 	</form>
 	<div id="homeinfobox">
-		{{ .user.Followers }} followers<br>
-		{{ .user.Following }} following<br>
+		<b> Followers: </b>
+		<br/>
+		{{ .user.Followers }}
+		<br>
+		<br>
+		<b> Following: </b>
+		<br/>
+		{{ .user.Following }}
+		<br>
 	</div>
 </div>
 {{range .posts}}
 <div class="post">
-	<a class="username" href="profile?u={{.Username}}">{{.Username}}</a>
-	{{.Body}}<br>
-	<i>posted {{.Elapsed}} ago via web </i>
+	<a class="username" href="profile?u={{.PostId}}">{{.PostId}}</a>
+	{{.Content}}<br>
+	<i>posted {{.TimePosted}} ago via web </i>
 </div>
 {{end}}
 {{if or .prev .next}}
