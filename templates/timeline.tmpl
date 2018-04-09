@@ -1,0 +1,16 @@
+<h2>Wall</h2>
+<i>Registered Users</i>
+<br>
+<div>
+	{{range .users}}
+	<a class="username" href="profile?u={{.Username}}">{{.Username}}</a>
+	{{end}}
+</div><br>
+<i>Messages from people</i><br>
+{{range .posts}}
+<div class="post">
+	<a class="username" href="profile?u={{.Username}}">{{.Username}}</a>
+	{{.Body}}<br>
+	<i>posted {{.Elapsed}} ago via web </i>
+</div>
+{{end}}
