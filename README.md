@@ -7,6 +7,7 @@ pmb418 | N13663464
 
 ## To Run:
 `go build`
+Then
 `./distwitter`
 
 
