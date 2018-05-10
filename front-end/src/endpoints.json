@@ -1,0 +1,11 @@
+{
+    "apiBasePath" : "http://localhost:8080/",
+    "checkLogin" : "",
+    "register" : "register",
+    "login" : "login",
+    "logout" : "logout",
+    "getPosts" : "home",
+    "delete" : "delete",
+    "follow" : "follow",
+    "post" : "post"
+}
