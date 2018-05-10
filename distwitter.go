@@ -3,10 +3,13 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"time"
+
+	"github.com/tidwall/sjson"
 
 	"github.com/tidwall/gjson"
 )
@@ -122,9 +125,13 @@ func post(user *userData, status string) {
 
 }
 
-func follow(u *userData, userToFollow string) {
+func follow(username string, userToFollow string) {
 	if userExists(userToFollow) {
-		// temp, err := ioutil.ReadFile(usersFilePath + userToFollow)
+		temp, err := ioutil.ReadFile(usersFilePath + username)
+		checkErr(err)
+		modifiedJson, err := sjson.Set(string(temp), "Following.-1", userToFollow)
+		fmt.Println(modifiedJson)
+		go ioutil.WriteFile(usersFilePath+username, []byte(modifiedJson), 0644)
 	}
 }
 
@@ -135,15 +142,54 @@ func delete(user *userData) {
 }
 
 func getUserPosts(username string) ([]postData, error) {
-
-	values, err := ioutil.ReadFile(postsFilePath + username)
+	user, err := loadUserInfo(username)
+	allPosts := make([]postData, 0)
 	checkErr(err)
-	postsList := gjson.Get(string(values), "posts").String()
-	postsByUser := make([]postData, 0)
-	if postsList != "[]" {
+	for i := range user.Following {
+		values, err := ioutil.ReadFile(postsFilePath + user.Following[i])
+		checkErr(err)
+		postsList := gjson.Get(string(values), "posts").String()
+		if postsList == "[]" {
+			continue
+		}
+		postsByUser := make([]postData, 0)
 		json.Unmarshal([]byte(postsList), &postsByUser)
+		allPosts = append(allPosts, postsByUser...)
 	}
-	return postsByUser, nil
+
+	if len(allPosts) < 10 {
+		users, err := getUsers()
+		checkErr(err)
+		userPostsToCapture := []string{}
+		rand.Seed(time.Now().Unix()) // initialize global pseudo random generator
+		for i := 0; i < 5; i++ {
+			if len(users) == 0 {
+				break
+			}
+			idx := rand.Intn(len(users))
+			newUser := users[idx]
+			if newUser.Username != username {
+				users[len(users)-1], users[idx] = users[idx], users[len(users)-1]
+				users = users[:len(users)-1]
+				userPostsToCapture = append(userPostsToCapture, newUser.Username)
+			}
+		}
+		userPostsToCapture = append(userPostsToCapture, username)
+
+		for i := range userPostsToCapture {
+			values, err := ioutil.ReadFile(postsFilePath + userPostsToCapture[i])
+			checkErr(err)
+			postsList := gjson.Get(string(values), "posts").String()
+			if postsList == "[]" {
+				break
+			}
+			postsByUser := make([]postData, 0)
+			json.Unmarshal([]byte(postsList), &postsByUser)
+			allPosts = append(allPosts, postsByUser...)
+		}
+
+	}
+	return allPosts, nil
 }
 
 func getUsers() ([]*userData, error) {

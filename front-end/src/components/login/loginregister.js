@@ -71,7 +71,7 @@ class LoginRegister extends Component {
             this.props.loginSuccess(resp)
         })
         .catch((err) => {
-            if(err.response.status === 401){
+            if(err.response.status === 409){
                 return alert(err.response.data.error)
             }
             else{

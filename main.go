@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	// "strconv"
@@ -70,6 +71,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		goBack := map[string]string{
 			"error": err,
 		}
+		fmt.Println(err)
 		w.Header().Add("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(goBack)
@@ -180,7 +182,7 @@ func Follow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userToFollow := r.PostFormValue("username")
-	go follow(u, userToFollow)
+	go follow(u.Username, userToFollow)
 	success := map[string]string{
 		"message": "Follower Added",
 	}
@@ -245,6 +247,7 @@ func main() {
 	router.HandleFunc("/post", Post).Methods("POST", "OPTIONS")
 	router.HandleFunc("/logout", Logout)
 	router.HandleFunc("/delete", Delete).Methods("DELETE", "OPTIONS")
+	router.HandleFunc("/follow", Follow).Methods("POST", "OPTIONS")
 
 	http.Handle("/", router)
 	http.ListenAndServe(":8080", nil)
